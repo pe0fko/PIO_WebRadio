@@ -52,4 +52,4 @@ static const struct _stationList {
 };
 
 const   int   stationListNumber   = sizeof(stationList) / sizeof(stationList[0]) - 1;
-const   int   StationListDefault  = 0;  //19;
+const   int   StationListDefault  = 11;

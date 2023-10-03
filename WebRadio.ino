@@ -151,19 +151,20 @@ static const char BODY_1[] PROGMEM = R"KEWL(
 )KEWL";
 
 static const char BODY_2[] PROGMEM = R"KEWL(
- <input type="submit" value="Change">
-</form>
-<hr>
-
-<select name="radio" id="radio_id">
+ <br>Select Radio:
+ <select name="radio">
+  <option value="99">-- Input field --</option>
 )KEWL";
 
 static const char BODY_3[] PROGMEM = R"KEWL(
-<option value="%d">%s (%s)</option>
+  <option value="%d">%s (%s)</option>
 )KEWL";
 
 static const char BODY_4[] PROGMEM = R"KEWL(
-</select>
+ </select>
+ <br>
+ <input type="submit" value="Change">
+</form>
 </div></body></html>
 )KEWL";
 
@@ -232,24 +233,47 @@ void HandleChangeURL(WiFiClient *client, char *params)
   char *valPtr;
   char newURL[sizeof(url)];
   char newType[4];
+  char newRadio[20];
+
+  Serial.printf_P(PSTR(">>>> Enter HandleChangeURL()\n"));
 
   newURL[0] = 0;
   newType[0] = 0;
   while (ParseParam(&params, &namePtr, &valPtr)) {
     ParamText("url", newURL);
     ParamText("type", newType);
+    ParamText("radio", newRadio);
   }
-  if (newURL[0] && newType[0]) {
-    newUrl = true;
-    strncpy(url, newURL, sizeof(url)-1);
-    url[sizeof(url)-1] = 0;
-    if (!strcmp_P(newType, PSTR("aac"))) {
-      isAAC = true;
-    } else {
-      isAAC = false;
+
+  yield();
+
+  if (newURL[0] && newType[0] && newRadio[0]) {
+    Serial.printf_P(PSTR(">>>> URL=%s, Type=%s, Radio=%s\n"), newURL, newType,newRadio);
+    Serial.flush();
+
+    int r = atoi(newRadio);
+    Serial.printf_P(PSTR(">>>> Radio=#%d\n"), r);
+    Serial.flush();
+
+    if (r < stationListNumber)
+    {
+      strncpy(url, stationList[r].url, sizeof(url)-1);
+      isAAC = stationList[r].mp3 ? false : true;
     }
+    else
+    {    
+      strncpy(url, newURL, sizeof(url)-1);
+      url[sizeof(url)-1] = 0;
+      if (!strcmp_P(newType, PSTR("aac"))) {
+        isAAC = true;
+      } else {
+        isAAC = false;
+      }
+    }
+    newUrl = true;
+
     strcpy_P(status, PSTR("Changing URL..."));
-    Serial.printf_P(PSTR("Changed URL to: %s(%s)\n"), url, newType);
+//    Serial.printf_P(PSTR("Changed URL to: %s(%s)\n"), url, newType);
     RedirectToIndex(client);
   } else {
     WebError(client, 404, NULL, false);
@@ -371,7 +395,8 @@ void setup()
     Serial.printf_P(PSTR("...Connecting to WiFi\n"));
     delay(1000);
   }
-  Serial.printf_P(PSTR("Connected\n"));
+  Serial.printf_P(PSTR("Connected at "));
+  Serial.println(WiFi.localIP());
   
   server.begin();
   
@@ -492,6 +517,8 @@ void SaveSettings()
 
 void PumpDecoder()
 {
+  yield();
+
 #ifdef USAGE_MDNS
   MDNS.update();
 #endif
