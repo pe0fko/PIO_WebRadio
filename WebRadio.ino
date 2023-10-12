@@ -133,14 +133,16 @@ static const char BODY_0[] PROGMEM = R"KEWL(
 <h2>ESP8266 Web Radio!</h2>
 <hr>
 Currently Playing: <span style="color:blue" id="titlespan">%s</span><br>
-Volume: <input type="range" name="vol" min="1" max="150" steps="10" value="%d" onchange="showValue(this.value)"/> <span id="volspan">%d</span>%%
+Volume: <input type="range" name="vol" min="1" max="100" steps="5" value="%d" onchange="showValue(this.value)"/> <span id="volspan">%d</span>%%
 <hr>
 Status: <span id="statusspan">%s</span>
 <form action="stop" method="POST"><input type="submit" value="Stop"></form>
 <hr>
 
 <form action="changeurl" method="GET">
- Change URL: <input type="text" name="url" value="%s">
+
+ <p>
+ Change URL: <input type="text" name="url">
 )KEWL";
 
 static const char BODY_1[] PROGMEM = R"KEWL(
@@ -148,12 +150,13 @@ static const char BODY_1[] PROGMEM = R"KEWL(
   <option value="mp3" %s>MP3</option>
   <option value="aac" %s>AAC</option>
  </select>
+ </p>
 )KEWL";
 
 static const char BODY_2[] PROGMEM = R"KEWL(
- <br>Select Radio:
+ <p>Select Radio:
  <select name="radio">
-  <option value="99">-- Input field --</option>
+  <option value="9999">-- Input field --</option>
 )KEWL";
 
 static const char BODY_3[] PROGMEM = R"KEWL(
@@ -162,30 +165,57 @@ static const char BODY_3[] PROGMEM = R"KEWL(
 
 static const char BODY_4[] PROGMEM = R"KEWL(
  </select>
- <br>
+ </p>
  <input type="submit" value="Change">
 </form>
 </div></body></html>
 )KEWL";
 
+static void WebWrite(WiFiClient *client, PGM_P ptr)
+{
+  const int blockSize = 256;
+  int len = strlen_P(ptr);
+  for (int i = 0; i < len; i += blockSize)
+  {
+    int l = len - i;
+    if (l > blockSize) l = blockSize;
+//    Serial.printf_P("= [%d] - [%.60s]\n", l, ptr);
+    client->write_P( ptr, l );
+    client->flush();
+    ptr += l;
+    yield();
+//    delay(5);
+  }
+//  client->flush();
+}
+
 void HandleIndex(WiFiClient *client)
 {
-  char buff[sizeof(BODY_0) + sizeof(title) + sizeof(status) + sizeof(url) + 3*2 ];    // 2048 << !!!!!!!!1
+  const int buffLength = sizeof(BODY_0) + sizeof(title) + sizeof(status) + sizeof(url) + 3*2 ;
+//  char buff[buffLength+100];    // 2048 << !!!!!!!!1
+  char buff[1024];    // 2048 << !!!!!!!!1
 
-  Serial.printf_P(PSTR("Sending INDEX...Free mem=%d\n"), ESP.getFreeHeap());
+  Serial.printf_P(PSTR("Sending INDEX...Free mem=%d, Buffer Length %d\n"), 
+      ESP.getFreeHeap(), buffLength);
 
   WebHeaders(client, NULL);
   WebPrintf(client, DOCTYPE);
 
-  client->write_P( HEAD, strlen_P(HEAD) );
+  WebWrite(client, HEAD);
+ // client->write_P( HEAD, strlen_P(HEAD) );
+ // delay(10);
 
-  sprintf_P(buff, BODY_0, title, volume, volume, status, url);
+  sprintf_P(buff, BODY_0, title, volume, volume, status);
   client->write(buff, strlen(buff) );
+  delay(10);
 
   sprintf_P(buff, BODY_1, isAAC?"":"selected", isAAC?"selected":"");
   client->write(buff, strlen(buff) );
+  delay(10);
 
-  client->write_P( BODY_2, strlen_P(BODY_2) );
+  WebWrite(client, BODY_2);
+//  client->write_P( BODY_2, strlen_P(BODY_2) );
+//  delay(10);
 
   for (int i = 0 ; i < stationListNumber; i++) 
   {
@@ -196,8 +226,11 @@ void HandleIndex(WiFiClient *client)
 
     client->write(buff, strlen(buff) );
   }
+  delay(10);
 
-  client->write_P( BODY_4, strlen_P(BODY_4) );
+  WebWrite(client, BODY_4);
+//  client->write_P( BODY_4, strlen_P(BODY_4) );
+//  delay(10);
 
   Serial.printf_P(PSTR("Sent INDEX...Free mem=%d\n"), ESP.getFreeHeap());
 }
@@ -222,6 +255,7 @@ void HandleVolume(WiFiClient *client, char *params)
   while (ParseParam(&params, &namePtr, &valPtr)) {
     ParamInt("vol", volume);
   }
+
   Serial.printf_P(PSTR("Set volume: %d\n"), volume);
   out->SetGain(((float)volume)/100.0);
   RedirectToIndex(client);
@@ -229,53 +263,55 @@ void HandleVolume(WiFiClient *client, char *params)
 
 void HandleChangeURL(WiFiClient *client, char *params)
 {
-  char *namePtr;
-  char *valPtr;
-  char newURL[sizeof(url)];
-  char newType[4];
-  char newRadio[20];
+  char* namePtr;
+  char* valPtr;
+  char  newURL[sizeof(url)];
+  char  newType[4];
+  int   radio = 9999;
 
   Serial.printf_P(PSTR(">>>> Enter HandleChangeURL()\n"));
 
   newURL[0] = 0;
   newType[0] = 0;
+
   while (ParseParam(&params, &namePtr, &valPtr)) {
     ParamText("url", newURL);
     ParamText("type", newType);
-    ParamText("radio", newRadio);
+    ParamInt("radio", radio);
   }
 
   yield();
 
-  if (newURL[0] && newType[0] && newRadio[0]) {
-    Serial.printf_P(PSTR(">>>> URL=%s, Type=%s, Radio=%s\n"), newURL, newType,newRadio);
-    Serial.flush();
+  if (radio >= 0 && radio < stationListNumber)
+  {
+    strncpy(url, stationList[radio].url, sizeof(url)-1);
+    url[sizeof(url)-1] = 0;
+    isAAC = !stationList[radio].mp3;
 
-    int r = atoi(newRadio);
-    Serial.printf_P(PSTR(">>>> Radio=#%d\n"), r);
-    Serial.flush();
+    Serial.printf_P(PSTR("Change to Radio = #%d\n"), radio);
 
-    if (r < stationListNumber)
-    {
-      strncpy(url, stationList[r].url, sizeof(url)-1);
-      isAAC = stationList[r].mp3 ? false : true;
-    }
-    else
-    {    
-      strncpy(url, newURL, sizeof(url)-1);
-      url[sizeof(url)-1] = 0;
-      if (!strcmp_P(newType, PSTR("aac"))) {
-        isAAC = true;
-      } else {
-        isAAC = false;
-      }
-    }
+    strcpy_P(status, PSTR("Changing Radio..."));
+    RedirectToIndex(client);
     newUrl = true;
+  }
+  else if (newURL[0] && newType[0]) 
+  {
+    strncpy(url, newURL, sizeof(url)-1);
+    url[sizeof(url)-1] = 0;
+    if (!strcmp_P(newType, PSTR("aac"))) {
+      isAAC = true;
+    } else {
+      isAAC = false;
+    }
+
+    Serial.printf_P(PSTR("Changed URL to: %s\n"), url);
 
     strcpy_P(status, PSTR("Changing URL..."));
-//    Serial.printf_P(PSTR("Changed URL to: %s(%s)\n"), url, newType);
     RedirectToIndex(client);
-  } else {
+    newUrl = true;
+  } 
+  else 
+  {
     WebError(client, 404, NULL, false);
   }
 }
@@ -318,10 +354,12 @@ void MDCallback(void *cbData, const char *type, bool isUnicode, const char *str)
   const char *ptr = reinterpret_cast<const char *>(cbData);
   (void) isUnicode; // Punt this ball for now
   (void) ptr;
+  
+  Serial.printf_P(PSTR("Stream type: %s\n"), type);
   if (strstr_P(type, PSTR("Title"))) { 
     strncpy(title, str, sizeof(title));
     title[sizeof(title)-1] = 0;
-    Serial.printf_P(PSTR("Stream title: %s\n"), title);
+    Serial.printf_P(PSTR("      title: %s\n"), title);
   } else {
     // Who knows what to do?  Not me!
   }
@@ -376,7 +414,6 @@ void setup()
   preallocateCodec = malloc(preallocateCodecSize);
 
   Serial.begin(115200);
-//  Serial.begin(74880);    // Werkt niet in Linux, kan de uart niet in die baud rate zetten.
   while(!Serial);
   if (!preallocateBuffer || !preallocateCodec) {
     Serial.printf_P(PSTR("FATAL ERROR:  Unable to preallocate %d bytes for app\n"), preallocateBufferSize+preallocateCodecSize);
@@ -430,9 +467,10 @@ void setup()
 
 void StartNewURL()
 {
-  Serial.printf_P(PSTR("Changing URL to: %s, vol=%d\n"), url, volume);
+//  Serial.printf_P(PSTR("Changing URL to: %s, vol=%d\n"), url, volume);
 
   newUrl = false;
+
   // Stop and free existing ones
   Serial.printf_P(PSTR("Before stop...Free mem=%d\n"), ESP.getFreeHeap());
   StopPlaying();
@@ -443,16 +481,20 @@ void StartNewURL()
   file = new AudioFileSourceICYStream(url);
   Serial.printf_P(PSTR("created icystream\n"));
   file->RegisterMetadataCB(MDCallback, NULL);
+ 
   buff = new AudioFileSourceBuffer(file, preallocateBuffer, preallocateBufferSize);
   Serial.printf_P(PSTR("created buffer\n"));
   buff->RegisterStatusCB(StatusCallback, NULL);
+ 
   decoder = isAAC ? (AudioGenerator*) new AudioGeneratorAAC(preallocateCodec, preallocateCodecSize) : (AudioGenerator*) new AudioGeneratorMP3(preallocateCodec, preallocateCodecSize);
   Serial.printf_P(PSTR("created decoder\n"));
   decoder->RegisterStatusCB(StatusCallback, NULL);
   Serial.printf_P("Decoder start...\n");
+
   decoder->begin(buff, out);
   out->SetGain(((float)volume)/100.0);
-  if (!decoder->isRunning()) {
+  if (!decoder->isRunning()) 
+  {
     Serial.printf_P(PSTR("Can't connect to URL"));
     StopPlaying();
     strcpy_P(status, PSTR("Unable to connect to URL"));
@@ -460,6 +502,7 @@ void StartNewURL()
   } else {
     Serial.printf_P("Decoder is running.\n");
   }
+
   Serial.printf_P("Done start new URL\n");
 }
 
@@ -482,7 +525,6 @@ void LoadSettings()
     isAAC = s.isAAC;
     volume = s.volume;
     Serial.printf_P(PSTR("Resuming stream from EEPROM: %s, type=%s, vol=%d\n"), url, isAAC?"AAC":"MP3", volume);
-    newUrl = true;
   } else {
     // Take default URL from the code is no EEPROM saved profile.
     strcpy(url, stationList[StationListDefault].url);
@@ -490,8 +532,8 @@ void LoadSettings()
     volume = stationList[StationListDefault].volume;
     Serial.printf_P(PSTR("Stream DEFAULT: %s (%s), type=%s, vol=%d\n"), 
         stationList[StationListDefault].name, url, isAAC?"AAC":"MP3", volume);
-    newUrl = true;
   }
+  newUrl = true;
 }
 
 void SaveSettings()
@@ -539,7 +581,7 @@ void PumpDecoder()
 
 void loop()
 {
-  if ((millis()-lastms) > 2*60*1000UL) {
+  if ((millis()-lastms) > 30*1000UL) {
     lastms = millis();
     Serial.printf_P ( PSTR("Running for %d seconds%c...Free mem=%d\n")
                     , lastms/1000, !decoder?' ':(decoder->isRunning()?'*':' '), ESP.getFreeHeap());
@@ -562,8 +604,10 @@ void loop()
   PumpDecoder();
 
   char reqBuff[384];
-  if (client && WebReadRequest(&client, reqBuff, 384, &reqUrl, &params)) {
+  if (client && WebReadRequest(&client, reqBuff, 384, &reqUrl, &params)) 
+  {
     PumpDecoder();
+
     if (IsIndexHTML(reqUrl)) {
       HandleIndex(&client);
     } else if (!strcmp_P(reqUrl, PSTR("stop"))) {
@@ -579,6 +623,7 @@ void loop()
     } else {
       WebError(&client, 404, NULL, false);
     }
+
     // web clients hate when door is violently shut
     while (client.available()) {
       PumpDecoder();
