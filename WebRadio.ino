@@ -179,14 +179,12 @@ static void WebWrite(WiFiClient *client, PGM_P ptr)
   {
     int l = len - i;
     if (l > blockSize) l = blockSize;
-//    Serial.printf_P("= [%d] - [%.60s]\n", l, ptr);
+//  Serial.printf_P("= [%d] - [%.60s]\n", l, ptr);
     client->write_P( ptr, l );
     client->flush();
     ptr += l;
     yield();
-//    delay(5);
   }
-//  client->flush();
 }
 
 void HandleIndex(WiFiClient *client)
