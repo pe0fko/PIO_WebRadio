@@ -17,15 +17,22 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-  ESP8266
-  Board: LOLIN(WEMOS) D1 mini (clone)
-  CPU Frequency 160MHz
-  SSID setting
-
+  PE0FKO:
+  ESP8266 Settings Arduno/Tools:
+    Board: LOLIN(WEMOS) D1 mini (clone)
+    CPU Frequency 160MHz
+    SSID setting
+    Erase Flash: "All Flash Contents"
 */
 
 //#define   USAGE_OTA
-#define   USAGE_MDNS
+#define     USAGE_MDNS
+#define     USAGE_WIFIMULTI
+#define     USAGE_STATUS_PRINT
+//#define     USAGE_EEPROM_SAVE
+
+#define     HOSTNAME    "webradio"; // .local
+
 
 #include <Arduino.h>
 
@@ -37,16 +44,26 @@
 #else
     #include <ESP8266WiFi.h>
 #endif
+#ifdef USAGE_EEPROM_SAVE
 #include <EEPROM.h>
-//#include <ESP8266WiFiMulti.h>   // Include the Wi-Fi-Multi library
+#endif
+#ifdef USAGE_MDNS
 #include <ESP8266mDNS.h>        // Include the mDNS library
+#endif
+#ifdef USAGE_OTA
 #include <ArduinoOTA.h>
+#endif
+#ifdef USAGE_WIFIMULTI
+#include <ESP8266WiFiMulti.h>   // Include the Wi-Fi-Multi library
+ESP8266WiFiMulti wifiMulti;
+#endif
 
 #include "AudioFileSourceICYStream.h"
 #include "AudioFileSourceBuffer.h"
 #include "AudioGeneratorMP3.h"
 #include "AudioGeneratorAAC.h"
 #include "AudioOutputI2S.h"
+
 
 #include "web.h"                  // Custom web server that doesn't need much RAM
 #include "StationList.h"          // List of streaming servers
@@ -55,11 +72,9 @@
 // Enter your WiFi setup here:
 const char* ssid      = WIFI_SSID_NAME_0;
 const char* password  = WIFI_SSID_PWD_0;
-const char* hostname  = "webradio"; // .local
+const char* hostname  = HOSTNAME; // .local
 
-//ESP8266WiFiMulti wifiMulti;     // Create an instance of the ESP8266WiFiMulti class, called 'wifiMulti'
-
-WiFiServer    server(80);
+WiFiServer                server(80);
 
 AudioGenerator*           decoder = NULL;
 AudioFileSourceICYStream* file    = NULL;
@@ -83,15 +98,16 @@ typedef struct {
 } Settings;
 
 #ifdef ESP8266
-const int preallocateBufferSize = 5*1024;
-const int preallocateCodecSize = 29192; // MP3 codec max mem needed
+//const     int     preallocateBufferSize   = 5*1024;
+const     int     preallocateBufferSize   = 3*1024;   // Buffer KLEIN gemaakt!!!!!!
+const     int     preallocateCodecSize    = 29192;    // MP3 codec max mem needed
 #else
-const int preallocateBufferSize = 16*1024;
-const int preallocateCodecSize = 85332; // AAC+SBR codec max mem needed
+const     int     preallocateBufferSize   = 16*1024;
+const     int     preallocateCodecSize    = 85332; // AAC+SBR codec max mem needed
 #endif
-void *preallocateBuffer = NULL;
-void *preallocateCodec = NULL;
-
+static    void    *preallocateBuffer      = NULL;
+static    void    *preallocateCodec       = NULL;
+static    bool    WifiIsConnected         = false;
 
 // C++11 multiline string constants are neato...
 static const char HEAD[] PROGMEM = R"KEWL(
@@ -321,6 +337,8 @@ void RedirectToIndex(WiFiClient *client)
 
 void StopPlaying()
 {
+  Serial.printf_P(PSTR("StopPlaying the stream.\n"));
+
   if (decoder) {
     decoder->stop();
     delete decoder;
@@ -336,6 +354,7 @@ void StopPlaying()
     delete file;
     file = NULL;
   }
+
   strcpy_P(status, PSTR("Stopped"));
   strcpy_P(title, PSTR("Stopped"));
 }
@@ -367,9 +386,11 @@ void StatusCallback(void *cbData, int code, const char *string)
   const char *ptr = reinterpret_cast<const char *>(cbData);
   (void) code;
   (void) ptr;
+#ifdef USAGE_STATUS_PRINT
   strncpy_P(status, string, sizeof(status)-1);
   status[sizeof(status)-1] = 0;
   Serial.printf_P(PSTR("Stream status: %s\n"), status);
+#endif
 }
 
 #ifdef USAGE_OTA
@@ -411,8 +432,10 @@ void setup()
   preallocateBuffer = malloc(preallocateBufferSize);
   preallocateCodec = malloc(preallocateCodecSize);
 
-  Serial.begin(115200);
+//  Serial.begin(115200);
+  Serial.begin(19200);
   while(!Serial);
+
   if (!preallocateBuffer || !preallocateCodec) {
     Serial.printf_P(PSTR("FATAL ERROR:  Unable to preallocate %d bytes for app\n"), preallocateBufferSize+preallocateCodecSize);
     while (1) delay(1000); // Infinite halt
@@ -423,22 +446,17 @@ void setup()
   WiFi.disconnect();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
 
-  // Try forever
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.printf_P(PSTR("...Connecting to WiFi\n"));
-    delay(1000);
-  }
-  Serial.printf_P(PSTR("Connected at "));
-  Serial.println(WiFi.localIP());
+#ifdef USAGE_WIFIMULTI
+//  wifiMulti.addAP(WIFI_SSID_01);  // guest
+  wifiMulti.addAP(WIFI_SSID_02);
+  wifiMulti.addAP(WIFI_SSID_03);
+  wifiMulti.addAP(WIFI_SSID_04);
+  wifiMulti.addAP(WIFI_SSID_05);
+#else
+  WiFi.begin(WIFI_SSID_01);
+#endif
   
-  server.begin();
-  
-  strcpy_P(url, PSTR("none"));
-  strcpy_P(status, PSTR("OK"));
-  strcpy_P(title, PSTR("Idle"));
-
   audioLogger = &Serial;
   file = NULL;
   buff = NULL;
@@ -446,7 +464,8 @@ void setup()
   decoder = NULL;
 
 #ifdef USAGE_MDNS
-  if (MDNS.begin(hostname)) {             // Start the mDNS responder for XXX.local
+  if (MDNS.begin(hostname))             // Start the mDNS responder for XXX.local
+  {
     MDNS.addService("http", "tcp", 80);
     Serial.printf_P(PSTR("Go to http://%s.local/ to control the web radio.\n"), hostname);
   }
@@ -460,12 +479,17 @@ void setup()
   init_OTA();
 #endif
 
+  strcpy_P(url, PSTR("none"));
+  strcpy_P(status, PSTR("OK"));
+  strcpy_P(title, PSTR("Idle"));
+  server.begin();
+
   LoadSettings();
 }
 
 void StartNewURL()
 {
-//  Serial.printf_P(PSTR("Changing URL to: %s, vol=%d\n"), url, volume);
+  Serial.printf_P(PSTR("Changing URL to: %s, vol=%d\n"), url, volume);
 
   newUrl = false;
 
@@ -473,9 +497,9 @@ void StartNewURL()
   Serial.printf_P(PSTR("Before stop...Free mem=%d\n"), ESP.getFreeHeap());
   StopPlaying();
   Serial.printf_P(PSTR("After stop...Free mem=%d\n"), ESP.getFreeHeap());
+
   SaveSettings();
-  Serial.printf_P(PSTR("Saved settings\n"));
-  
+
   file = new AudioFileSourceICYStream(url);
   Serial.printf_P(PSTR("created icystream\n"));
   file->RegisterMetadataCB(MDCallback, NULL);
@@ -484,7 +508,9 @@ void StartNewURL()
   Serial.printf_P(PSTR("created buffer\n"));
   buff->RegisterStatusCB(StatusCallback, NULL);
  
-  decoder = isAAC ? (AudioGenerator*) new AudioGeneratorAAC(preallocateCodec, preallocateCodecSize) : (AudioGenerator*) new AudioGeneratorMP3(preallocateCodec, preallocateCodecSize);
+  decoder = isAAC 
+        ? (AudioGenerator*) new AudioGeneratorAAC(preallocateCodec, preallocateCodecSize) 
+        : (AudioGenerator*) new AudioGeneratorMP3(preallocateCodec, preallocateCodecSize);
   Serial.printf_P(PSTR("created decoder\n"));
   decoder->RegisterStatusCB(StatusCallback, NULL);
   Serial.printf_P("Decoder start...\n");
@@ -506,6 +532,7 @@ void StartNewURL()
 
 void LoadSettings()
 {
+#ifdef USAGE_EEPROM_SAVE
   // Restore from EEPROM, check the checksum matches
   Settings s;
   uint8_t *ptr = reinterpret_cast<uint8_t *>(&s);
@@ -532,10 +559,19 @@ void LoadSettings()
         stationList[StationListDefault].name, url, isAAC?"AAC":"MP3", volume);
   }
   newUrl = true;
+#else
+  strcpy(url, stationList[StationListDefault].url);
+  isAAC = !stationList[StationListDefault].mp3;
+  volume = stationList[StationListDefault].volume;
+  Serial.printf_P(PSTR("Stream DEFAULT: %s (%s), type=%s, vol=%d\n"), 
+      stationList[StationListDefault].name, url, isAAC?"AAC":"MP3", volume);
+  newUrl = true;
+#endif
 }
 
 void SaveSettings()
 {
+#ifdef USAGE_EEPROM_SAVE
   // Store in "EEPROM" to restart automatically
   Settings s;
   memset(&s, 0, sizeof(s));
@@ -553,6 +589,9 @@ void SaveSettings()
   }
   EEPROM.commit();
   EEPROM.end();
+
+  Serial.printf_P(PSTR("Saved settings\n"));
+#endif
 }
 
 void PumpDecoder()
@@ -565,6 +604,7 @@ void PumpDecoder()
 #ifdef USAGE_OTA
   ArduinoOTA.handle();
 #endif
+
   if (decoder && decoder->isRunning()) 
   {
     if (!decoder->loop()) {
@@ -577,9 +617,39 @@ void PumpDecoder()
   }
 }
 
+
 void loop()
 {
-  if ((millis()-lastms) > 30*1000UL) {
+#ifdef USAGE_WIFIMULTI
+  if (wifiMulti.run(5000) == WL_CONNECTED) 
+#else
+  if (WiFi.status() == WL_CONNECTED) 
+#endif
+  {
+    if (!WifiIsConnected)
+    {
+      WifiIsConnected = true;
+      Serial.print("WiFi connected: ");
+      Serial.print(WiFi.SSID());
+      Serial.print(" ");
+      Serial.println(WiFi.localIP());
+    }
+  } else {
+    if (WifiIsConnected)
+    {
+      WifiIsConnected = false;
+      Serial.println("WiFi now disconnected!");
+    }
+  }
+
+#ifdef USAGE_MDNSxx
+  MDNS.update();
+#endif
+#ifdef USAGE_OTAxx
+  ArduinoOTA.handle();
+#endif
+
+  if ((millis()-lastms) > 60*1000UL) {
     lastms = millis();
     Serial.printf_P ( PSTR("Running for %d seconds%c...Free mem=%d\n")
                     , lastms/1000, !decoder?' ':(decoder->isRunning()?'*':' '), ESP.getFreeHeap());
@@ -627,11 +697,15 @@ void loop()
       PumpDecoder();
       client.read();
     }
-  }
 
-  PumpDecoder();
-  if (client) {
     client.flush();
     client.stop();
   }
+
+//  PumpDecoder();
+
+//  if (client) {
+//    client.flush();
+//    client.stop();
+//  }
 }

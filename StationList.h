@@ -1,7 +1,7 @@
 // PE0FKO
 //
 
-#define DV    6    // Default Volume
+#define DV    24        // Default Volume
 static const struct _stationList {
   const char    *name;  // Noame of the stream
   const char    *url;   // URL of stream server
@@ -13,7 +13,12 @@ static const struct _stationList {
   { "PI2NOS 430.125"  , "http://stream.hobbyscoop.nl/pi2nos"              , DV, true },   // 00
   { "PI3UTR 145.275"  , "http://stream.hobbyscoop.nl/pi3utr"              , DV, true },   // 01
   { "PI6NOS 1298.375" , "http://stream.hobbyscoop.nl/pi6nos"              , DV, true },   // 02
-  { "PI2NON 430.275"  , "http://pc7x.net/audio/pi2non/"                   , DV, true },
+
+//  { "PI2NON 430.275"  , "http://pc7x.net/audio/pi2non/"                   , DV+20, true },   // 03
+  { "PI2NON 430.275"  , 
+                        "http://pa0ebc.nl:9744/broadwave.mp3?src=2&rate=0", DV+20, true },   // 03
+
+
   { "PI3GOE 145.755"  , "http://stream.hobbyscoop.nl/pi3goe"              , DV, true },
   { "PI1DFT 430.087"  , "http://stream.hobbyscoop.nl/pi1dft"              , DV, true },
   { "PI1ZLD 438.400"  , "http://stream.hobbyscoop.nl/pi1zld"              , DV, true },
@@ -52,8 +57,8 @@ static const struct _stationList {
   { "Lite Favorites"  , "http://naxos.cdnstream.com:80/1255_128"          , DV, true },
   { "MAXXED Out"      , "http://149.56.195.94:8015/steam"                 , DV, true },
   { "SomaFM Xmas"     , "http://ice2.somafm.com/christmas-128-mp3"        , DV, true },
-  { 0, 0, 0}
+  { 0, 0, 0, 0}
 };
 
 const   int   stationListNumber   = sizeof(stationList) / sizeof(stationList[0]) - 1;
-const   int   StationListDefault  = 11;
+const   int   StationListDefault  = 0;
