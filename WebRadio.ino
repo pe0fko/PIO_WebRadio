@@ -17,11 +17,14 @@
   You should have received a copy of the GNU General Public License
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+  V0.10   2023/12/07  Disable the sound when there i a http request.
+                      Start after 5.5sec when browser webpage closed.
+
   PE0FKO:
   ESP8266 Settings Arduno/Tools:
     Board: LOLIN(WEMOS) D1 mini (clone)
     CPU Frequency 160MHz
-    SSID setting
+    Debug Port: "Serial"
     Erase Flash: "All Flash Contents"
 */
 
@@ -29,10 +32,9 @@
 #define     USAGE_MDNS
 #define     USAGE_WIFIMULTI
 #define     USAGE_STATUS_PRINT
-//#define     USAGE_EEPROM_SAVE
+#define     USAGE_EEPROM_SAVE
 
 #define     HOSTNAME    "webradio"; // .local
-
 
 #include <Arduino.h>
 
@@ -64,14 +66,28 @@ ESP8266WiFiMulti wifiMulti;
 #include "AudioGeneratorAAC.h"
 #include "AudioOutputI2S.h"
 
-
 #include "web.h"                  // Custom web server that doesn't need much RAM
 #include "StationList.h"          // List of streaming servers
 #include "WiFi_SSID.h"
 
+
+
+#if 0
+class Serial_t {
+  void begin(int) {};
+  void printf(...) {};
+  void printf_P(...) {};
+} Serial;
+
+//#define Serial.printf(...)
+//#define Serial.printf_P(...)
+
+#endif
+
+
 // Enter your WiFi setup here:
-const char* ssid      = WIFI_SSID_NAME_0;
-const char* password  = WIFI_SSID_PWD_0;
+//const char* ssid      = WIFI_SSID_NAME_0;
+//const char* password  = WIFI_SSID_PWD_0;
 const char* hostname  = HOSTNAME; // .local
 
 WiFiServer                server(80);
@@ -81,11 +97,13 @@ AudioFileSourceICYStream* file    = NULL;
 AudioFileSourceBuffer*    buff    = NULL;
 AudioOutputI2S*           out     = NULL;
 
+static  uint32_t          TimerNewURL = 0L;
+
 int volume = 0;
 char title[64];
 char url[96];
 char status[64];
-bool newUrl = false;
+//bool newUrl = false;
 bool isAAC = true;
 unsigned long retryms = 0;
 unsigned long lastms = 0;
@@ -99,7 +117,8 @@ typedef struct {
 
 #ifdef ESP8266
 //const     int     preallocateBufferSize   = 5*1024;
-const     int     preallocateBufferSize   = 3*1024;   // Buffer KLEIN gemaakt!!!!!!
+//const     int     preallocateCodecSize    = 29192;    // MP3 codec max mem needed
+const     int     preallocateBufferSize   = (3*1024);   // Buffer KLEIN gemaakt!!!!!!
 const     int     preallocateCodecSize    = 29192;    // MP3 codec max mem needed
 #else
 const     int     preallocateBufferSize   = 16*1024;
@@ -107,7 +126,6 @@ const     int     preallocateCodecSize    = 85332; // AAC+SBR codec max mem need
 #endif
 static    void    *preallocateBuffer      = NULL;
 static    void    *preallocateCodec       = NULL;
-static    bool    WifiIsConnected         = false;
 
 // C++11 multiline string constants are neato...
 static const char HEAD[] PROGMEM = R"KEWL(
@@ -279,17 +297,17 @@ void HandleChangeURL(WiFiClient *client, char *params)
 {
   char* namePtr;
   char* valPtr;
-  char  newURL[sizeof(url)];
+  char  newURLString[sizeof(url)];
   char  newType[4];
   int   radio = 9999;
 
   Serial.printf_P(PSTR(">>>> Enter HandleChangeURL()\n"));
 
-  newURL[0] = 0;
+  newURLString[0] = 0;
   newType[0] = 0;
 
   while (ParseParam(&params, &namePtr, &valPtr)) {
-    ParamText("url", newURL);
+    ParamText("url", newURLString);
     ParamText("type", newType);
     ParamInt("radio", radio);
   }
@@ -306,11 +324,12 @@ void HandleChangeURL(WiFiClient *client, char *params)
 
     strcpy_P(status, PSTR("Changing Radio..."));
     RedirectToIndex(client);
-    newUrl = true;
+//    newUrl = true;
+    TimerNewURL = millis();
   }
-  else if (newURL[0] && newType[0]) 
+  else if (newURLString[0] && newType[0]) 
   {
-    strncpy(url, newURL, sizeof(url)-1);
+    strncpy(url, newURLString, sizeof(url)-1);
     url[sizeof(url)-1] = 0;
     if (!strcmp_P(newType, PSTR("aac"))) {
       isAAC = true;
@@ -322,7 +341,8 @@ void HandleChangeURL(WiFiClient *client, char *params)
 
     strcpy_P(status, PSTR("Changing URL..."));
     RedirectToIndex(client);
-    newUrl = true;
+//    newUrl = true;
+    TimerNewURL = millis();
   } 
   else 
   {
@@ -383,14 +403,22 @@ void MDCallback(void *cbData, const char *type, bool isUnicode, const char *str)
 }
 void StatusCallback(void *cbData, int code, const char *string)
 {
+  static uint32_t last = 0;
+
   const char *ptr = reinterpret_cast<const char *>(cbData);
   (void) code;
   (void) ptr;
+
+  if ((millis() - last) > 1000)
+  {
+    last = millis();
+
 #ifdef USAGE_STATUS_PRINT
-  strncpy_P(status, string, sizeof(status)-1);
-  status[sizeof(status)-1] = 0;
-  Serial.printf_P(PSTR("Stream status: %s\n"), status);
+    strncpy_P(status, string, sizeof(status)-1);
+    status[sizeof(status)-1] = 0;
+    Serial.printf_P(PSTR("Stream status: %s\n"), status);
 #endif
+  }
 }
 
 #ifdef USAGE_OTA
@@ -432,8 +460,7 @@ void setup()
   preallocateBuffer = malloc(preallocateBufferSize);
   preallocateCodec = malloc(preallocateCodecSize);
 
-//  Serial.begin(115200);
-  Serial.begin(19200);
+  Serial.begin(115200);
   while(!Serial);
 
   if (!preallocateBuffer || !preallocateCodec) {
@@ -448,11 +475,8 @@ void setup()
   WiFi.mode(WIFI_STA);
 
 #ifdef USAGE_WIFIMULTI
-//  wifiMulti.addAP(WIFI_SSID_01);  // guest
-  wifiMulti.addAP(WIFI_SSID_02);
-  wifiMulti.addAP(WIFI_SSID_03);
-  wifiMulti.addAP(WIFI_SSID_04);
-  wifiMulti.addAP(WIFI_SSID_05);
+  for(uint8_t i = 0; i < WifiApListNumber; i++)
+    wifiMulti.addAP(WifiApList[i].ssid, WifiApList[i].passwd);
 #else
   WiFi.begin(WIFI_SSID_01);
 #endif
@@ -485,18 +509,18 @@ void setup()
   server.begin();
 
   LoadSettings();
+
+  TimerNewURL = millis();
 }
 
 void StartNewURL()
 {
-  Serial.printf_P(PSTR("Changing URL to: %s, vol=%d\n"), url, volume);
+  Serial.printf_P(PSTR(">> Changing URL to: %s, vol=%d\n"), url, volume);
 
-  newUrl = false;
-
-  // Stop and free existing ones
-  Serial.printf_P(PSTR("Before stop...Free mem=%d\n"), ESP.getFreeHeap());
-  StopPlaying();
-  Serial.printf_P(PSTR("After stop...Free mem=%d\n"), ESP.getFreeHeap());
+//  // Stop and free existing ones
+//  Serial.printf_P(PSTR("Before stop...Free mem=%d\n"), ESP.getFreeHeap());
+//  StopPlaying();
+//  Serial.printf_P(PSTR("After stop...Free mem=%d\n"), ESP.getFreeHeap());
 
   SaveSettings();
 
@@ -558,14 +582,16 @@ void LoadSettings()
     Serial.printf_P(PSTR("Stream DEFAULT: %s (%s), type=%s, vol=%d\n"), 
         stationList[StationListDefault].name, url, isAAC?"AAC":"MP3", volume);
   }
-  newUrl = true;
+  TimerNewURL = millis();
+//  newUrl = true;
 #else
   strcpy(url, stationList[StationListDefault].url);
   isAAC = !stationList[StationListDefault].mp3;
   volume = stationList[StationListDefault].volume;
   Serial.printf_P(PSTR("Stream DEFAULT: %s (%s), type=%s, vol=%d\n"), 
       stationList[StationListDefault].name, url, isAAC?"AAC":"MP3", volume);
-  newUrl = true;
+  TimerNewURL = millis();
+//  newUrl = true;
 #endif
 }
 
@@ -620,6 +646,8 @@ void PumpDecoder()
 
 void loop()
 {
+static    bool    WifiIsConnected         = false;
+
 #ifdef USAGE_WIFIMULTI
   if (wifiMulti.run(5000) == WL_CONNECTED) 
 #else
@@ -655,12 +683,25 @@ void loop()
                     , lastms/1000, !decoder?' ':(decoder->isRunning()?'*':' '), ESP.getFreeHeap());
   }
 
-  if (retryms && (millis()-retryms)>0) {
+  if (retryms && (millis()-retryms)>0) 
+  {
+    Serial.printf_P( PSTR("------ retryms ----------\n"));
     retryms = 0;
-    newUrl = true;
+    TimerNewURL = millis();
+//    newUrl = true;
   }
-  
-  if (newUrl) {
+
+//  if (newUrl)
+//  {
+//    Serial.printf_P( PSTR("------ newUrl ----------\n"));
+//    TimerNewURL = millis();
+//    newUrl = false;
+//  }
+
+  if (TimerNewURL != 0L && (millis() - TimerNewURL) >= 5500)
+  {
+    TimerNewURL = 0L;
+    Serial.printf_P(PSTR("Free mem=%d\n"), ESP.getFreeHeap());
     StartNewURL();
   }
 
@@ -671,41 +712,43 @@ void loop()
   WiFiClient client = server.available();
   PumpDecoder();
 
-  char reqBuff[384];
-  if (client && WebReadRequest(&client, reqBuff, 384, &reqUrl, &params)) 
+  if (client)
   {
-    PumpDecoder();
+    char reqBuff[384];
 
-    if (IsIndexHTML(reqUrl)) {
-      HandleIndex(&client);
-    } else if (!strcmp_P(reqUrl, PSTR("stop"))) {
-      HandleStop(&client);
-    } else if (!strcmp_P(reqUrl, PSTR("status"))) {
-      HandleStatus(&client);
-    } else if (!strcmp_P(reqUrl, PSTR("title"))) {
-      HandleTitle(&client);
-    } else if (!strcmp_P(reqUrl, PSTR("setvol"))) {
-      HandleVolume(&client, params);
-    } else if (!strcmp_P(reqUrl, PSTR("changeurl"))) {
-      HandleChangeURL(&client, params);
-    } else {
-      WebError(&client, 404, NULL, false);
-    }
+    StopPlaying();
 
-    // web clients hate when door is violently shut
-    while (client.available()) {
+    if (WebReadRequest(&client, reqBuff, 384, &reqUrl, &params)) 
+    {
       PumpDecoder();
-      client.read();
-    }
 
-    client.flush();
-    client.stop();
+      if (IsIndexHTML(reqUrl)) {
+        HandleIndex(&client);
+      } else if (!strcmp_P(reqUrl, PSTR("stop"))) {
+        HandleStop(&client);
+      } else if (!strcmp_P(reqUrl, PSTR("status"))) {
+        HandleStatus(&client);
+      } else if (!strcmp_P(reqUrl, PSTR("title"))) {
+        HandleTitle(&client);
+      } else if (!strcmp_P(reqUrl, PSTR("setvol"))) {
+        HandleVolume(&client, params);
+      } else if (!strcmp_P(reqUrl, PSTR("changeurl"))) {
+        HandleChangeURL(&client, params);
+      } else {
+        WebError(&client, 404, NULL, false);
+      }
+
+      // web clients hate when door is violently shut
+      while (client.available()) {
+        PumpDecoder();
+        client.read();
+      }
+
+      client.flush();
+      client.stop();
+
+      TimerNewURL = millis();
+    }
   }
 
-//  PumpDecoder();
-
-//  if (client) {
-//    client.flush();
-//    client.stop();
-//  }
 }
