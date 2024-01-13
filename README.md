@@ -2,6 +2,7 @@
 Simple internet radio with webinterface, from Example project
 
 Create a file "WiFi_SSID.h"
+<pre>
 /*
 **  PE0FKO SSID's bereikbaar.
 **  -------------------------
@@ -19,3 +20,4 @@ static struct WifiApList_t {
 , { NULL, NULL }
 };
 const int   WifiApListNumber = sizeof(WifiApList) / sizeof(WifiApList[0]) - 1;
+</pre>
