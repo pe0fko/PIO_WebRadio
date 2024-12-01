@@ -115,6 +115,11 @@ typedef struct {
   int16_t checksum;
 } Settings;
 
+// Extern definitions
+void RedirectToIndex(WiFiClient *client);
+void LoadSettings();
+void SaveSettings();
+
 #ifdef ESP8266
 //const     int     preallocateBufferSize   = 5*1024;
 //const     int     preallocateCodecSize    = 29192;    // MP3 codec max mem needed
