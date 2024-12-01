@@ -15,9 +15,7 @@ static const struct _stationList {
   { "PI6NOS 1298.375" , "http://stream.hobbyscoop.nl/pi6nos"              , DV+30, true },   // 02
 
 //  { "PI2NON 430.275"  , "http://pc7x.net/audio/pi2non/"                   , DV+20, true },   // 03
-  { "PI2NON 430.275"  , 
-                        "http://pa0ebc.nl:9744/broadwave.mp3?src=2&rate=0", DV+30, true },   // 03
-
+  { "PI2NON 430.275"  , "http://pa0ebc.nl:9744/broadwave.mp3?src=2&rate=0", DV+30, true },   // 03
 
   { "PI3GOE 145.755"  , "http://stream.hobbyscoop.nl/pi3goe"              , DV, true },   // 04
   { "PI1DFT 430.087"  , "http://stream.hobbyscoop.nl/pi1dft"              , DV, true },   // 05
@@ -25,6 +23,7 @@ static const struct _stationList {
 
   { "PI3HVN 145.700"  , "http://44.137.68.19:9745/broadwave.mp3?src=1&rate=1" , DV, true },  // Heerenveen
   { "PI3HVN 430.025"  , "http://44.137.68.19:9745/broadwave.mp3?src=2&rate=1" , DV, true },  // Heerenveen
+
 
   // https://www.hendrikjansen.nl/henk/streaming.html
   //  -sb-  96 Kbps   12 KB/s
